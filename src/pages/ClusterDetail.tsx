@@ -479,315 +479,271 @@ function MemberCard({
 
 /* ───────── COMPARE TAB ───────── */
 
+const LOGIC_BLOCKS = [
+  {
+    name: 'Price Lookup',
+    description: 'Retrieve active base price for the product from Pricebook',
+    status: 'duplicate' as const,
+    lines: { preferred: '2', candidate: '2', legacy: '2–3' },
+    recommendation: 'Identical across all — use preferred version',
+  },
+  {
+    name: 'Input Validation',
+    description: 'Null-check and boundary validation on price input',
+    status: 'variant' as const,
+    lines: { preferred: '3–5', candidate: '3–5', legacy: '3–4' },
+    recommendation: 'Preferred throws typed exception; Legacy silently returns 0 — standardize on exception pattern',
+  },
+  {
+    name: 'Discount Schedule Lookup',
+    description: 'Query discount tiers/schedules based on product and tier level',
+    status: 'variant' as const,
+    lines: { preferred: '8', candidate: '8', legacy: '7–11' },
+    recommendation: 'Preferred uses helper class; Legacy has inline SOQL (governor limit risk) — migrate to helper pattern',
+  },
+  {
+    name: 'Quantity Threshold Matching',
+    description: 'Loop through discount tiers to match quantity against min/max bounds',
+    status: 'duplicate' as const,
+    lines: { preferred: '9–14', candidate: '9–13', legacy: '12–14' },
+    recommendation: 'Core matching logic is identical — use preferred version',
+  },
+  {
+    name: 'Final Price Calculation',
+    description: 'Apply discount percentage and round to 2 decimal places',
+    status: 'duplicate' as const,
+    lines: { preferred: '16–17', candidate: '15–16', legacy: '16' },
+    recommendation: 'Same formula — preferred has explicit RoundingMode; standardize on that',
+  },
+  {
+    name: 'Audit Logging',
+    description: 'Log pricing decision for compliance audit trail',
+    status: 'unique-preferred' as const,
+    lines: { preferred: '19', candidate: '—', legacy: '—' },
+    recommendation: 'Only in preferred — adopt across all implementations for compliance',
+  },
+  {
+    name: 'Discount Ceiling Enforcement',
+    description: 'Cap maximum discount at policy-defined ceiling',
+    status: 'missing-others' as const,
+    lines: { preferred: '—', candidate: '—', legacy: '—' },
+    recommendation: 'Missing from all variants — add from DiscountPolicyService to prevent over-discounting',
+  },
+];
+
 function CompareTab({ cluster }: { cluster: Cluster }) {
-  const membersWithCode = cluster.members.filter((m) => m.codeLines && m.codeLines.length > 0);
-  const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(membersWithCode.slice(0, 2).map((m) => m.id)),
-  );
+  const [expandedBlock, setExpandedBlock] = useState<number | null>(null);
 
-  const toggleSelection = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const duplicateCount = LOGIC_BLOCKS.filter(b => b.status === 'duplicate').length;
+  const variantCount = LOGIC_BLOCKS.filter(b => b.status === 'variant').length;
+  const uniqueCount = LOGIC_BLOCKS.filter(b => b.status === 'unique-preferred' || b.status === 'missing-others').length;
+
+  const statusConfig: Record<string, { label: string; bg: string; color: string; border: string; icon: string }> = {
+    'duplicate': { label: 'Duplicate — Can Reuse', bg: '#f0faf4', color: '#2e844a', border: '#b7ebc9', icon: '✓' },
+    'variant': { label: 'Variant — Needs Standardization', bg: '#fffde7', color: '#b7741a', border: '#ffe082', icon: '≠' },
+    'unique-preferred': { label: 'Unique to Preferred — Adopt Everywhere', bg: '#e1f0ff', color: '#0176d3', border: '#90caf9', icon: '★' },
+    'missing-others': { label: 'Gap — Missing from All', bg: '#fde8e8', color: '#c23934', border: '#ef9a9a', icon: '!' },
   };
-
-  const selectedMembers = membersWithCode.filter((m) => selected.has(m.id));
-
-  const maxLines = Math.max(0, ...selectedMembers.map((m) => m.codeLines!.length));
-
-  let identicalCount = 0;
-  let differentCount = 0;
-  let uniqueCount = 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Shared Intent */}
       <Card>
-        <SectionTitle icon={<Lightbulb size={18} />}>Shared Intent</SectionTitle>
+        <SectionTitle icon={<Lightbulb size={18} />}>What These Implementations Do</SectionTitle>
         <p style={{ fontSize: 13, lineHeight: 1.6 }}>{cluster.sharedIntent}</p>
       </Card>
 
-      {/* Common / Differences */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <Card>
-          <SectionTitle icon={<CheckCircle2 size={18} />} iconColor="#2e844a">
-            Common Logic Blocks
-          </SectionTitle>
-          <ul style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {cluster.commonBlocks.map((b, i) => (
-              <li key={i} style={{ fontSize: 13, lineHeight: 1.5 }}>
-                {b}
-              </li>
-            ))}
-          </ul>
-        </Card>
-        <Card>
-          <SectionTitle icon={<XCircle size={18} />} iconColor="#c23934">
-            Key Differences
-          </SectionTitle>
-          <ul style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {cluster.differences.map((d, i) => (
-              <li key={i} style={{ fontSize: 13, lineHeight: 1.5 }}>
-                {d}
-              </li>
-            ))}
-          </ul>
-        </Card>
+      {/* Summary Strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        {[
+          { label: 'Duplicate Logic', value: duplicateCount, sub: 'Safe to reuse from preferred', bg: '#f0faf4', color: '#2e844a' },
+          { label: 'Variant Logic', value: variantCount, sub: 'Needs standardization', bg: '#fffde7', color: '#b7741a' },
+          { label: 'Unique / Gaps', value: uniqueCount, sub: 'Adopt or add', bg: '#e1f0ff', color: '#0176d3' },
+          { label: 'Total Blocks Analyzed', value: LOGIC_BLOCKS.length, sub: 'Across all implementations', bg: '#f5f5f5', color: '#444' },
+        ].map((s, i) => (
+          <div key={i} style={{ background: s.bg, borderRadius: 8, padding: '14px 16px', border: `1px solid ${s.color}20` }}>
+            <div style={{ fontSize: 24, fontWeight: 700, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: s.color, marginBottom: 2 }}>{s.label}</div>
+            <div style={{ fontSize: 11, color: 'var(--sf-text-secondary)' }}>{s.sub}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Selection table */}
-      {membersWithCode.length > 0 && (
-        <Card>
-          <SectionTitle icon={<GitCompare size={18} />}>
-            Select Implementations to Compare
-          </SectionTitle>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid var(--sf-border)', textAlign: 'left' }}>
-                <th style={{ padding: '8px 12px', width: 40 }} />
-                <th style={thStyle}>Method</th>
-                <th style={thStyle}>Owner</th>
-                <th style={thStyle}>LOC</th>
-                <th style={thStyle}>Similarity</th>
-                <th style={thStyle}>Badge</th>
-              </tr>
-            </thead>
-            <tbody>
-              {membersWithCode.map((m) => {
-                const badge = BADGE_COLORS[m.badge] || BADGE_COLORS.Variant;
-                return (
-                  <tr
-                    key={m.id}
-                    style={{
-                      borderBottom: '1px solid var(--sf-border)',
-                      background: selected.has(m.id) ? '#f0f7ff' : undefined,
-                    }}
-                  >
-                    <td style={{ padding: '8px 12px', textAlign: 'center' }}>
-                      <input
-                        type="checkbox"
-                        checked={selected.has(m.id)}
-                        onChange={() => toggleSelection(m.id)}
-                        style={{ accentColor: 'var(--sf-blue)' }}
-                      />
-                    </td>
-                    <td style={{ padding: '8px 12px' }}>
-                      <code style={{ fontSize: 12 }}>{m.name}</code>
-                    </td>
-                    <td style={{ padding: '8px 12px', color: 'var(--sf-text-secondary)' }}>
-                      {m.owner}
-                    </td>
-                    <td style={{ padding: '8px 12px' }}>{m.loc}</td>
-                    <td style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--sf-blue)' }}>
-                      {m.similarity}%
-                    </td>
-                    <td style={{ padding: '8px 12px' }}>
-                      <Badge text={m.badge} bg={badge.bg} color={badge.color} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
-      )}
+      {/* Implementations being compared */}
+      <Card>
+        <SectionTitle icon={<GitCompare size={18} />}>Implementations Compared</SectionTitle>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 8 }}>
+          {cluster.members.slice(0, 3).map((m) => {
+            const badge = BADGE_COLORS[m.badge] || BADGE_COLORS.Variant;
+            return (
+              <div key={m.id} style={{
+                padding: '12px 14px',
+                border: m.badge === 'Preferred' ? '2px solid #2e844a' : '1px solid var(--sf-border)',
+                borderRadius: 8,
+                background: m.badge === 'Preferred' ? '#f8fdf9' : '#fff',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <Badge text={m.badge} bg={badge.bg} color={badge.color} />
+                  {m.badge === 'Preferred' && <Star size={12} color="#2e844a" fill="#2e844a" />}
+                </div>
+                <code style={{ fontSize: 11, fontWeight: 600, color: 'var(--sf-blue)', wordBreak: 'break-all', lineHeight: 1.4, display: 'block' }}>
+                  {m.name}
+                </code>
+                <div style={{ fontSize: 11, color: 'var(--sf-text-secondary)', marginTop: 6, display: 'flex', gap: 10 }}>
+                  <span>{m.loc} lines</span>
+                  <span>{m.similarity}% similar</span>
+                  <span>{m.owner}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
 
-      {/* Side-by-side comparison */}
-      {selectedMembers.length >= 2 && (
-        <Card style={{ padding: 0, overflow: 'hidden' }}>
-          <div
-            style={{
-              padding: '14px 20px',
-              borderBottom: '1px solid var(--sf-border)',
-              fontSize: 14,
-              fontWeight: 700,
-            }}
-          >
-            Code Comparison
+      {/* Logic Block Comparison — the hero section */}
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{
+          padding: '16px 20px',
+          borderBottom: '1px solid var(--sf-border)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>Logic Block Comparison</div>
+            <div style={{ fontSize: 12, color: 'var(--sf-text-secondary)', marginTop: 2 }}>
+              Each row represents a distinct logic block. Click to expand details and see the recommended action.
+            </div>
           </div>
-          {/* Column Headers */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: `repeat(${selectedMembers.length}, 1fr)`,
-              borderBottom: '2px solid var(--sf-border)',
-            }}
-          >
-            {selectedMembers.map((m) => {
-              const badge = BADGE_COLORS[m.badge] || BADGE_COLORS.Variant;
-              return (
-                <div
-                  key={m.id}
-                  style={{
-                    padding: '10px 14px',
-                    borderRight: '1px solid var(--sf-border)',
-                    background: '#fafafa',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <code style={{ fontSize: 11, fontWeight: 600, color: 'var(--sf-blue)' }}>
-                      {m.name.split('.').pop()}
-                    </code>
-                    <Badge text={m.badge} bg={badge.bg} color={badge.color} />
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: 'var(--sf-text-secondary)',
-                      display: 'flex',
-                      gap: 12,
-                    }}
-                  >
-                    <span>{m.loc} LOC</span>
-                    <span>{m.similarity}% similar</span>
+          <div style={{ display: 'flex', gap: 12, fontSize: 11 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: '#2e844a' }} /> Duplicate
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: '#fe9339' }} /> Variant
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: '#0176d3' }} /> Unique
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: '#c23934' }} /> Gap
+            </span>
+          </div>
+        </div>
+
+        {/* Table Header */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '4px 1fr 200px 100px 100px 100px',
+          borderBottom: '2px solid var(--sf-border)',
+          background: '#fafafa',
+          fontSize: 11,
+          fontWeight: 600,
+          color: 'var(--sf-text-secondary)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.03em',
+        }}>
+          <div />
+          <div style={{ padding: '10px 14px' }}>Logic Block</div>
+          <div style={{ padding: '10px 14px' }}>Status</div>
+          <div style={{ padding: '10px 14px', textAlign: 'center' }}>Preferred</div>
+          <div style={{ padding: '10px 14px', textAlign: 'center' }}>Candidate</div>
+          <div style={{ padding: '10px 14px', textAlign: 'center' }}>Legacy</div>
+        </div>
+
+        {/* Rows */}
+        {LOGIC_BLOCKS.map((block, idx) => {
+          const sc = statusConfig[block.status];
+          const isExpanded = expandedBlock === idx;
+          return (
+            <div key={idx}>
+              <div
+                onClick={() => setExpandedBlock(isExpanded ? null : idx)}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '4px 1fr 200px 100px 100px 100px',
+                  borderBottom: '1px solid var(--sf-border)',
+                  cursor: 'pointer',
+                  background: isExpanded ? sc.bg : '#fff',
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={(e) => { if (!isExpanded) e.currentTarget.style.background = '#fafbfc'; }}
+                onMouseLeave={(e) => { if (!isExpanded) e.currentTarget.style.background = '#fff'; }}
+              >
+                <div style={{ background: sc.color }} />
+                <div style={{ padding: '12px 14px' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#181818' }}>{block.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--sf-text-secondary)', marginTop: 2 }}>{block.description}</div>
+                </div>
+                <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center' }}>
+                  <span style={{
+                    padding: '3px 10px',
+                    borderRadius: 4,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    background: sc.bg,
+                    color: sc.color,
+                    border: `1px solid ${sc.border}`,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}>
+                    <span style={{ fontSize: 10 }}>{sc.icon}</span> {sc.label}
+                  </span>
+                </div>
+                <div style={{ padding: '12px 14px', textAlign: 'center', fontSize: 12, fontFamily: 'monospace', color: block.lines.preferred === '—' ? '#ccc' : '#444' }}>
+                  {block.lines.preferred === '—' ? '—' : `L${block.lines.preferred}`}
+                </div>
+                <div style={{ padding: '12px 14px', textAlign: 'center', fontSize: 12, fontFamily: 'monospace', color: block.lines.candidate === '—' ? '#ccc' : '#444' }}>
+                  {block.lines.candidate === '—' ? '—' : `L${block.lines.candidate}`}
+                </div>
+                <div style={{ padding: '12px 14px', textAlign: 'center', fontSize: 12, fontFamily: 'monospace', color: block.lines.legacy === '—' ? '#ccc' : '#444' }}>
+                  {block.lines.legacy === '—' ? '—' : `L${block.lines.legacy}`}
+                </div>
+              </div>
+              {isExpanded && (
+                <div style={{
+                  padding: '14px 20px 14px 18px',
+                  background: sc.bg,
+                  borderBottom: '1px solid var(--sf-border)',
+                  borderLeft: `4px solid ${sc.color}`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <Lightbulb size={14} color={sc.color} style={{ marginTop: 2, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: sc.color, marginBottom: 4 }}>Recommendation</div>
+                      <div style={{ fontSize: 13, lineHeight: 1.5, color: '#333' }}>{block.recommendation}</div>
+                    </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-          {/* Code Lines */}
-          <div style={{ fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace", fontSize: 12 }}>
-            {Array.from({ length: maxLines }).map((_, lineIdx) => {
-              const cells = selectedMembers.map((m) => {
-                const cl = m.codeLines![lineIdx];
-                return cl || null;
-              });
+              )}
+            </div>
+          );
+        })}
+      </Card>
 
-              const texts = cells.map((c) => (c ? c.text.trim() : null));
-              const nonNull = texts.filter((t) => t !== null);
-
-              const lineCategories = cells.map((cell, colIdx) => {
-                if (!cell) return 'missing';
-                const myText = texts[colIdx]!.trim();
-                if (myText === '') return 'identical';
-                const otherTexts = texts.filter((_, j) => j !== colIdx && _ !== null);
-                if (otherTexts.length > 0 && otherTexts.every((t) => t!.trim() === myText)) {
-                  return 'identical';
-                }
-                if (otherTexts.length > 0 && otherTexts.every((t) => t!.trim() !== myText)) {
-                  const allSame = nonNull.every(t => t === nonNull[0]);
-                  if (allSame) return 'identical';
-                  const appearsElsewhere = otherTexts.some(t => t!.trim() === myText);
-                  if (!appearsElsewhere && otherTexts.length > 0) {
-                    const allOthersSame = otherTexts.every(t => t === otherTexts[0]);
-                    if (allOthersSame && otherTexts[0]!.trim() !== myText) return 'unique';
-                    return 'different';
-                  }
-                  return 'different';
-                }
-                return 'different';
-              });
-
-              lineCategories.forEach((cat) => {
-                if (cat === 'identical') identicalCount++;
-                else if (cat === 'unique') uniqueCount++;
-                else if (cat === 'different') differentCount++;
-              });
-
-              const LINE_STYLES: Record<string, { bg: string; border: string; symbol: string }> = {
-                identical: { bg: '#f0faf4', border: '#2e844a', symbol: '=' },
-                different: { bg: '#fffde7', border: '#fe9339', symbol: '≠' },
-                unique: { bg: '#fde8e8', border: '#c23934', symbol: '+' },
-                missing: { bg: '#f5f5f5', border: '#e0e0e0', symbol: '' },
-              };
-
-              return (
-                <div
-                  key={lineIdx}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: `repeat(${selectedMembers.length}, 1fr)`,
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  {cells.map((cell, colIdx) => {
-                    const cat = lineCategories[colIdx];
-                    const ls = LINE_STYLES[cat];
-                    return (
-                      <div
-                        key={colIdx}
-                        style={{
-                          padding: '2px 10px',
-                          background: ls.bg,
-                          borderLeft: `3px solid ${ls.border}`,
-                          borderRight: colIdx < cells.length - 1 ? '1px solid var(--sf-border)' : undefined,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          minHeight: 24,
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: '#999',
-                            width: 22,
-                            textAlign: 'right',
-                            fontSize: 10,
-                            flexShrink: 0,
-                            userSelect: 'none',
-                          }}
-                        >
-                          {cell ? cell.lineNum : ''}
-                        </span>
-                        <span
-                          style={{
-                            width: 14,
-                            textAlign: 'center',
-                            fontSize: 10,
-                            fontWeight: 700,
-                            color: ls.border,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {ls.symbol}
-                        </span>
-                        <span
-                          style={{
-                            flex: 1,
-                            whiteSpace: 'pre',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                        >
-                          {cell ? cell.text : ''}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-          {/* Legend */}
-          <div
-            style={{
-              padding: '10px 20px',
-              borderTop: '1px solid var(--sf-border)',
+      {/* Key Differences Summary */}
+      <Card>
+        <SectionTitle icon={<XCircle size={18} />} iconColor="#c23934">
+          Key Differences That Require Attention
+        </SectionTitle>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+          {cluster.differences.map((d, i) => (
+            <div key={i} style={{
               display: 'flex',
-              gap: 20,
-              fontSize: 11,
-              color: 'var(--sf-text-secondary)',
-              background: '#fafafa',
-            }}
-          >
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 12, height: 12, background: '#f0faf4', border: '1px solid #2e844a', borderRadius: 2 }} />
-              Identical ({identicalCount})
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 12, height: 12, background: '#fffde7', border: '1px solid #fe9339', borderRadius: 2 }} />
-              Different ({differentCount})
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 12, height: 12, background: '#fde8e8', border: '1px solid #c23934', borderRadius: 2 }} />
-              Unique ({uniqueCount})
-            </span>
-          </div>
-        </Card>
-      )}
+              alignItems: 'flex-start',
+              gap: 10,
+              padding: '10px 14px',
+              background: '#fef5f5',
+              borderRadius: 6,
+              borderLeft: '3px solid #c23934',
+            }}>
+              <XCircle size={14} color="#c23934" style={{ marginTop: 2, flexShrink: 0 }} />
+              <span style={{ fontSize: 13, lineHeight: 1.5 }}>{d}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
 
       {/* Recommended Standard */}
       <Card
